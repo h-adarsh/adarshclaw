@@ -1,0 +1,31 @@
+{
+  "name": "adarshclaw",
+  "module": "index.ts",
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/figlet": "^1.7.0",
+    "@types/node": "^26.6.3"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  },
+  "private": true,
+  "bin": {
+    "adarshclaw-build": "./index.ts"
+  },
+  "type": "module",
+  "dependencies": {
+    "@clack/prompts": "^1.8.1",
+    "@mendable/firecrawl-js": "^4.41.0",
+    "@openrouter/ai-sdk-provider": "^3.1.0",
+    "@types/marked-terminal": "^6.1.1",
+    "ai": "^7.0.116",
+    "chalk": "^6.0.0",
+    "commander": "^15.0.0",
+    "diff": "^9.0.0",
+    "figlet": "^1.11.4",
+    "marked": "^18.0.14",
+    "marked-terminal": "^7.3.0",
+    "telegraf": "^4.16.3"
+  }
+}
