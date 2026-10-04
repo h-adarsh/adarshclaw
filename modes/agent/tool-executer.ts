@@ -1,9 +1,17 @@
 import fs from "node:fs";
 import path from "node:path";
 import { homedir } from "node:os";
-import { spawnSync } from "node:child_process";
 import type { AgentConfig, ActionLog } from "./types";
 import { ActionTracker } from "./action-tracker";
+import { realRelativeInside } from "./safe-path";
+import { runInSandbox } from "./sandbox";
+
+export interface ShellResult {
+  command: string;
+  exitCode: number | null;
+  output: string;
+  error?: string;
+}
 
 const TEXT_EXT = new Set([
   ".ts",
@@ -40,24 +48,33 @@ export class Toolexecuter {
   ) {}
 
   private resolveSafe(rel: string): string {
-    const abs = path.resolve(this.config.codebasePath, rel);
     const root = path.resolve(this.config.codebasePath);
-    const relCheck = path.relative(root, abs);
-    if (relCheck.startsWith("..") || path.isAbsolute(relCheck)) {
-      throw new Error(`Path escapes workspace: ${rel}`);
+    const abs = path.resolve(root, rel);
+    // Follows symlinks. Throws if the real location is outside the workspace.
+    const realRel = realRelativeInside(root, abs);
+    // Check the exclusion rules on the REAL location too, so a symlink
+    // like notes.txt -> .env cannot get around them.
+    if (this.excluded(realRel)) {
+      throw new Error(`Path is excluded by policy: ${rel}`);
     }
     return abs;
   }
 
   private excluded(relPath: string): boolean {
-    const norm = this.norm(relPath);
+    // Lower-case everything: macOS and Windows treat .ENV and .env as the same file.
+    const norm = this.norm(relPath).toLowerCase();
     const segments = norm.split("/");
     const base = segments[segments.length - 1] ?? "";
 
-    for (const pat of this.config.excludePatterns) {
-      if (pat === "*.log" && base.endsWith(".log")) return true;
-      if (pat === ".env*" && base.startsWith(".env")) return true;
-      if (pat.includes("*")) continue;
+    for (const raw of this.config.excludePatterns) {
+      const pat = raw.toLowerCase();
+      if (pat.includes("*")) {
+        const re = new RegExp(
+          "^" + pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$",
+        );
+        if (re.test(base)) return true;
+        continue;
+      }
       if (segments.includes(pat) || norm === pat || norm.startsWith(`${pat}/`))
         return true;
     }
@@ -160,6 +177,7 @@ export class Toolexecuter {
     if (!this.config.tools.allowFolderCreation)
       throw new Error("Folder creation disabled");
     this.assertNotExcluded(rel, "create_folder");
+    this.resolveSafe(rel); // fail now, not at apply time
     const key = this.norm(rel);
     this.tracker.log({
       type: "folder_create",
@@ -181,7 +199,7 @@ export class Toolexecuter {
       for (const ent of entries) {
         const full = path.join(dir, ent.name);
         const relP = path.relative(this.config.codebasePath, full);
-        if (this.excluded(relP)) continue;
+        if (ent.isSymbolicLink() || this.excluded(relP)) continue;
         if (ent.isDirectory()) {
           lines.push(`${prefix}${ent.name}/`);
           if (recursive) walk(full, `${prefix}${ent.name}/`);
@@ -233,7 +251,7 @@ export class Toolexecuter {
           .relative(this.config.codebasePath, full)
           .split(path.sep)
           .join("/");
-        if (this.excluded(relP)) continue;
+        if (ent.isSymbolicLink() || this.excluded(relP)) continue;
         if (ent.isDirectory()) walk(full);
         else if (nameRe.test(relP) || nameRe.test(ent.name)) {
           if (contentQuery) {
@@ -276,7 +294,7 @@ export class Toolexecuter {
       for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
         const full = path.join(dir, ent.name);
         const relP = path.relative(this.config.codebasePath, full);
-        if (this.excluded(relP)) continue;
+        if (ent.isSymbolicLink() || this.excluded(relP)) continue;
         if (ent.isDirectory()) {
           dirs++;
           walk(full);
@@ -353,6 +371,8 @@ export class Toolexecuter {
       return abs === r || abs.startsWith(r + path.sep);
     });
     if (!allowed) throw new Error("read_skill: outside skill roots");
+    if (path.basename(abs) !== "SKILL.md")
+      throw new Error("read_skill: only SKILL.md files can be read");
     const text = fs.readFileSync(abs, "utf8");
     this.tracker.log({
       type: "code_analysis",
@@ -363,7 +383,7 @@ export class Toolexecuter {
     return text;
   }
 
-  applyApprovedFromTracker(): { errors: string[] } {
+  applyApprovedFromTracker(): { errors: string[]; shellResults: ShellResult[] } {
     const errors: string[] = [];
     const all = [...this.tracker.getActions()];
 
@@ -404,22 +424,30 @@ export class Toolexecuter {
       }
     }
 
+    // Shell commands run INSIDE the Docker sandbox, never on the host.
+    // If Docker is unavailable the command is not run (fail closed).
+    const shellResults: ShellResult[] = [];
+    const workspace = fs.realpathSync(this.config.codebasePath);
     for (const a of all.filter(
       (x) => x.type === "tool_execute" && x.status === "approved",
     )) {
       const cmd = a.details.command;
       if (!cmd) continue;
-      const r = spawnSync(cmd, {
-        shell: true,
-        cwd: this.config.codebasePath,
-        encoding: "utf8",
-        maxBuffer: 16 * 1024 * 1024,
+      const r = runInSandbox(cmd, {
+        workspace,
+        image: this.config.sandboxImage,
+        network: this.config.sandboxNetwork ?? false,
+        timeoutMs: this.config.shellTimeoutMs ?? 60_000,
+        dockerBin: this.config.sandboxDockerBin,
+        uid: process.getuid?.(),
+        gid: process.getgid?.(),
       });
-      if (r.status && r.status !== 0)
-        errors.push(`shell exit ${r.status}: ${cmd}`);
+      shellResults.push({ command: cmd, exitCode: r.exitCode, output: r.output, error: r.error });
+      if (r.error) errors.push(`shell failed (${r.error}): ${cmd}`);
+      else if (r.exitCode !== 0) errors.push(`shell exit ${r.exitCode}: ${cmd}`);
     }
 
-    return { errors };
+    return { errors, shellResults };
   }
 
   clearStaging():void{

@@ -29,6 +29,14 @@ export interface AgentConfig {
   codebasePath: string;
   maxFileSizeToRead: number;
   excludePatterns: string[];
+  /** Kill limit for one approved shell command. Default 60 000 ms. */
+  shellTimeoutMs?: number;
+  /** Docker image for the shell sandbox. Default: oven/bun:1 */
+  sandboxImage?: string;
+  /** Default false: sandbox has no network. */
+  sandboxNetwork?: boolean;
+  /** Only for tests. */
+  sandboxDockerBin?: string;
   tools: {
     allowShellExecution: boolean;
     allowFileModification: boolean;
@@ -39,7 +47,7 @@ export interface AgentConfig {
 
 export const defaultAgentConfig = (): AgentConfig => ({
   codebasePath: process.cwd(),
-  maxFileSizeToRead: 1024 * 1024 ,
+  maxFileSizeToRead: 1024 * 1024,
   excludePatterns: [
     'node_modules',
     '.git',
@@ -48,7 +56,14 @@ export const defaultAgentConfig = (): AgentConfig => ({
     '.next',
     '*.log',
     '.env*',
+    '.npmrc',
+    '.ssh',
+    '.aws',
+    '*.pem',
+    '*.key',
   ],
+  shellTimeoutMs: 60_000,
+  sandboxNetwork: false,
   tools: {
     allowShellExecution: true,
     allowFileModification: true,
