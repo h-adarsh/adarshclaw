@@ -1,20 +1,18 @@
-import { Telegraf } from "telegraf";
 import chalk from "chalk";
 import { WELCOME } from "./constants";
-import { registerHandlers } from "./handlers";
+import { parseOwnerId } from "./auth";
+import { buildBot } from "./bot";
 
 export async function runTelegramMode() {
   console.log("runTelegramMode started");
 
   const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
-  const ownerId = process.env.TELEGRAM_OWNER_ID?.trim();
-  if (!token || !ownerId) {
-    throw new Error("Missing TELEGRAM_BOT_TOKEN or TELEGRAM_OWNER_ID. Check your .env path.");
+  if (!token) {
+    throw new Error("Missing TELEGRAM_BOT_TOKEN. Check your .env path.");
   }
+  const ownerId = parseOwnerId(process.env.TELEGRAM_OWNER_ID); // refuses to start if bad
 
-  const bot = new Telegraf(token);
-  bot.catch((err) => console.error(chalk.red("Bot error:"), err));
-  registerHandlers(bot);
+  const bot = buildBot(token, ownerId);
 
   const me = await bot.telegram.getMe(); // fails right away on a wrong token
   console.log(chalk.green(`Connected as @${me.username}`));
