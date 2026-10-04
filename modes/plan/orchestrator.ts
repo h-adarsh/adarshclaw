@@ -5,13 +5,13 @@ import { getAgentModel } from "../../ai/ai.config.ts";
 import { ActionTracker } from "../agent/action-tracker.ts";
 import { Toolexecuter } from "../agent/tool-executer.ts";
 import { createAgentTools } from "../agent/agent-tools.ts";
+import { assertToolSetIsSafe } from "../agent/tool-policy.ts";
 import { defaultAgentConfig } from "../agent/types.ts";
 import { runApprovalFlow } from "../agent/approval.ts";
 import { renderTerminalMarkdown } from "../../tui/terminal-md.ts";
 import { generatePlan } from "./planner.ts";
 import { printPlan, selectSteps } from "./selection.ts";
 import type { PlanStep } from "./types.ts";
-import { createWebTools } from "./web-tools.ts";
 
 
 function stepPrompt(goal: string, step: PlanStep): string {
@@ -36,16 +36,17 @@ export async function runPlanMode(): Promise<void> {
     message: `Execute ${selected.length} step(s)`,
     initialValue: true,
   });
+  // Before: the answer was ignored, so "No" still executed the steps.
+  if (isCancel(proceed) || !proceed) return;
 
   const config = defaultAgentConfig();
   const tracker = new ActionTracker();
   const executor = new Toolexecuter(tracker, config);
 
-
-  const tools = {
-    ...createAgentTools(executor),
-    ...createWebTools(tracker)
-  };
+  // SECURITY: this agent can stage shell commands, so it gets NO web tools.
+  // Web research belongs in generatePlan(), which has no write or shell tools.
+  const tools = createAgentTools(executor);
+  assertToolSetIsSafe(tools, "plan execution");
 
   for (const step of selected) {
     console.log(chalk.bold(`\n🔧 ${step.title}\n`));
@@ -58,8 +59,8 @@ export async function runPlanMode(): Promise<void> {
 
     const r = await agent.generate({prompt:stepPrompt(plan.goal , step)})
 
-    if(r.text) return console.log(renderTerminalMarkdown(r.text))
-
+    // Before: `return console.log(...)` stopped after the first step that printed text.
+    if (r.text) console.log(renderTerminalMarkdown(r.text));
   }
 
   const ok = await runApprovalFlow(tracker);

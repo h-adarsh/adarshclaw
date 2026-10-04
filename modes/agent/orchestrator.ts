@@ -8,6 +8,7 @@ import { stepCountIs, ToolLoopAgent } from "ai";
 import { getAgentModel } from "../../ai";
 import { renderTerminalMarkdown } from "../../tui/terminal-md";
 import { runApprovalFlow } from "./approval";
+import { assertToolSetIsSafe } from "./tool-policy"
 
 export async function runAgentMode() {
   console.log(chalk.green("Running in Agent mode..."));
@@ -25,6 +26,7 @@ export async function runAgentMode() {
   const tracker = new ActionTracker()
   const executer = new Toolexecuter(tracker, config);
   const tools = createAgentTools(executer);
+  assertToolSetIsSafe(tools, "agent");
 
   const agent = new ToolLoopAgent({
     model: getAgentModel(),

@@ -5,10 +5,10 @@ import { z } from "zod";
 import { getAgentModel } from "../../ai/ai.config.ts";
 import { ActionTracker } from "../agent/action-tracker.ts";
 import { Toolexecuter } from "../agent/tool-executer.ts";
+import { assertToolSetIsSafe } from "../agent/tool-policy.ts";
 import { defaultAgentConfig } from "../agent/types.ts";
 import { renderTerminalMarkdown } from "../../tui/terminal-md.ts";
 import { runApprovalFlow } from "../agent/approval.ts";
-import { createWebTools } from "../plan/web-tools.ts";
 
 function createAskTools(executer: Toolexecuter) {
   return {
@@ -91,11 +91,11 @@ export async function runAskMode() {
   const tracker = new ActionTracker();
   const executer = new Toolexecuter(tracker, config);
 
-
-  const tools = {
-    ...createAskTools(executer),
-    ...createWebTools(tracker)
-  };
+  // SECURITY: Ask mode reads your files, so it gets NO web tools.
+  // (Before: web tools were always added, so file contents could leave
+  // through a crawled URL, and a web page could steer the agent.)
+  const tools = createAskTools(executer);
+  assertToolSetIsSafe(tools, "ask");
 
   const agent = new ToolLoopAgent({
     model: getAgentModel(),
@@ -126,7 +126,13 @@ export async function runAskMode() {
 
   if(isCancel(filename)) return;
 
-  executer.createFile(filename , asMd(question , answer));
+  try {
+    executer.createFile(filename , asMd(question , answer));
+  } catch (e) {
+    // Before: an existing file made createFile throw and crashed the CLI.
+    console.log(chalk.red(`\nCould not stage the file: ${(e as Error).message}\n`));
+    return;
+  }
   const ok = await runApprovalFlow(tracker);
   if(!ok) return executer.clearStaging();
 

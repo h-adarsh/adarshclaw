@@ -13,7 +13,7 @@ import { ActionTracker } from "../agent/action-tracker.ts";
 import { Toolexecuter } from "../agent/tool-executer.ts";
 import { defaultAgentConfig } from "../agent/types.ts";
 import type { Plan, PlanStep } from "./types.ts";
-import { createWebTools } from "./web-tools.ts";
+import { assertToolSetIsSafe } from "../agent/tool-policy.ts";
 
 const planSchema = z.object({
   researchSummary: z.string().optional(),
@@ -92,14 +92,12 @@ function readOnlyTools(executor: Toolexecuter) {
   };
 }
 
-const PLAN_INSTRUCTIONS = (codebase: string, hasWeb: boolean) =>
+const PLAN_INSTRUCTIONS = (codebase: string) =>
   [
     "You are a Plan-Mode planner. You DO NOT modify files.",
     `Workspace: ${codebase}`,
     "Use read-only tools for codebase/skills research.",
-    hasWeb
-      ? "Web tools are available (web_search/web_crawl/fetch_url). Use only when needed."
-      : "Web tools are unavailable (no FIRECRAWL_API_KEY).",
+    "You have no internet access. Plan from the codebase and the goal only.",
     "Output must match the provided JSON schema.",
     "Keep it short: 1–15 steps.",
   ].join("\n");
@@ -110,14 +108,15 @@ export async function generatePlan(goal: string) {
   const executor = new Toolexecuter(tracker, config);
 
 
-  const hasWeb = !!process.env.FIRECRAWL_API_KEY;
   const model = wrapLanguageModel({
     model:getAgentModel(),
     middleware:extractJsonMiddleware()
   })
 
 
-  const tools = { ...readOnlyTools(executor) , ...(hasWeb ? createWebTools(tracker) : {}) };
+  // The planner reads your files, so it gets NO web tools.
+  const tools = readOnlyTools(executor);
+  assertToolSetIsSafe(tools, "planner");
 
   console.log(chalk.cyan("\n🔍 Researching & drafting a plan…\n"));
 
@@ -125,7 +124,7 @@ export async function generatePlan(goal: string) {
     model,
     tools,
     stopWhen:stepCountIs(20),
-    system:PLAN_INSTRUCTIONS(config.codebasePath , hasWeb),
+    system:PLAN_INSTRUCTIONS(config.codebasePath),
     prompt:`User goal: \n${goal}`,
     output:Output.object({schema:planSchema})
   });
