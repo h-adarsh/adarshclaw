@@ -69,22 +69,5 @@ export function createWebTools(tracker: ActionTracker) {
         return clip(md) || '(empty)';
       },
     }),
-
-    fetch_url: tool({
-      description: 'HTTP GET for a URL. Returns response body.',
-      inputSchema: z.object({ url: z.string().url() }),
-      execute: async ({ url }) => {
-        const r = await fetch(url, { redirect: 'follow' });
-        const body = await r.text();
-        const out = clip(body, 16_000);
-        tracker.log({
-          type: 'code_analysis',
-          path: `fetch:${url}`,
-          details: { after: `HTTP ${r.status}\n\n${out}`, toolName: 'fetch_url' },
-          status: 'executed',
-        });
-        return `HTTP ${r.status}\n\n${out}`;
-      },
-    }),
   };
 }
