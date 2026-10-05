@@ -14,6 +14,7 @@ import { Toolexecuter } from "../agent/tool-executer.ts";
 import { defaultAgentConfig } from "../agent/types.ts";
 import type { Plan, PlanStep } from "./types.ts";
 import { assertToolSetIsSafe } from "../agent/tool-policy.ts";
+import { tokenBudgetExceeded } from "../agent/run-limits.ts";
 
 const planSchema = z.object({
   researchSummary: z.string().optional(),
@@ -102,7 +103,7 @@ const PLAN_INSTRUCTIONS = (codebase: string) =>
     "Keep it short: 1–15 steps.",
   ].join("\n");
 
-export async function generatePlan(goal: string) {
+export async function generatePlan(goal: string, signal?: AbortSignal) {
   const config = defaultAgentConfig();
   const tracker = new ActionTracker();
   const executor = new Toolexecuter(tracker, config);
@@ -123,7 +124,8 @@ export async function generatePlan(goal: string) {
   const result = await generateText({
     model,
     tools,
-    stopWhen:stepCountIs(20),
+    stopWhen:[stepCountIs(20), tokenBudgetExceeded()],
+    abortSignal: signal,
     system:PLAN_INSTRUCTIONS(config.codebasePath),
     prompt:`User goal: \n${goal}`,
     output:Output.object({schema:planSchema})

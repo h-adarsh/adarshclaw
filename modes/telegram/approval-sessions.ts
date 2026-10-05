@@ -4,6 +4,7 @@ import type { ActionTracker } from "../agent/action-tracker.ts";
 import type { Toolexecuter } from "../agent/tool-executer.ts";
 import type { ActionLog } from "../agent/types.ts";
 import { composeBeforeAfter, formatPatch } from "../agent/diff-view.ts";
+import { verifyChanges } from "../agent/approval.ts";
 
 /** Staged changes are dropped if nobody approves them within this time. */
 export const APPROVAL_TTL_MS = 15 * 60_000;
@@ -92,13 +93,14 @@ export function reviewText(pending: ActionLog[]): string {
   return parts.join("\n\n").trim();
 }
 
-export function approvalSummary(pending: ActionLog[]): string {
+export function approvalSummary(pending: ActionLog[], securitySummary?: string): string {
   const { files, shells } = groupPending(pending);
   return [
     "Staged changes need your approval",
     "",
     `📄 ${files.size} file/folder path(s) changed`,
     `🖥 ${shells.length} shell command(s) queued`,
+    ...(securitySummary ? ["", "🛡️ Security Summary:", securitySummary] : []),
     "",
     "Press Review to see everything, in full. Apply buttons appear only after that.",
   ].join("\n");
@@ -207,6 +209,13 @@ export async function finishOrApprove(
   const old = approvalSessions.get(chatId);
   if (old) dropSession(chatId, old);
 
+  let securitySummary = "";
+  try {
+     securitySummary = await verifyChanges(pending);
+  } catch (e: any) {
+     securitySummary = "Review failed: " + e.message;
+  }
+
   const session: ApprovalSession = {
     id: randomBytes(6).toString("hex"),
     createdAt: Date.now(),
@@ -218,5 +227,5 @@ export async function finishOrApprove(
     applied: false,
   };
   approvalSessions.set(chatId, session);
-  await ctx.reply(approvalSummary(pending), { ...approvalKeyboard(session) });
+  await ctx.reply(approvalSummary(pending, securitySummary), { ...approvalKeyboard(session) });
 }

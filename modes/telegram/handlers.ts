@@ -21,25 +21,21 @@ import {
   sendLong,
   shellActions,
 } from "./approval-sessions";
-import { finish, tryStart } from "./run-lock";
+import { DeadlineError, RUN_DEADLINE_MS, runLocked, runWithDeadline, tryStart } from "./run-lock";
 import { withNativeUpload } from "./telegram-upload";
 
 // NOTE: there is no owner check in this file on purpose.
 // bot.use(ownerOnly(...)) in bot.ts runs before every handler below.
 
-/** Runs a task, always releases the lock, and tells the user if it failed. */
-function runLocked(
-  ctx: { reply: (t: string) => Promise<unknown> },
-  chatId: number,
-  task: () => Promise<unknown>,
-) {
-  void task()
-    .catch(async (e) => {
-      console.error(e);
-      await ctx.reply("❌ The task failed. Details are in the terminal.").catch(() => {});
-    })
-    .finally(() => finish(chatId));
-}
+/** What to tell the user when a task fails or runs too long. */
+const failed = (ctx: { reply: (t: string) => Promise<unknown> }) => async (e: unknown) => {
+  console.error(e);
+  const msg =
+    e instanceof DeadlineError
+      ? `⏱ The task ran longer than ${Math.round(RUN_DEADLINE_MS / 60_000)} minutes and was stopped. Nothing was staged for approval.`
+      : "❌ The task failed. Details are in the terminal.";
+  await ctx.reply(msg);
+};
 
 const WAITING = "⏳ You still have staged changes waiting for approval. Review or reject them first.";
 const BUSY = "⏳ Another task is still running.";
@@ -57,7 +53,7 @@ export function registerHandlers(bot: Telegraf) {
       });
 
     await ctx.reply("🔍 Researching your question…");
-    void runAsk(ctx, q).catch(console.error);
+    void runWithDeadline((signal) => runAsk(ctx, q, signal)).catch(failed(ctx));
   });
 
   bot.command("web", async (ctx) => {
@@ -68,7 +64,7 @@ export function registerHandlers(bot: Telegraf) {
       });
 
     await ctx.reply("🌐 Searching the web… (this agent cannot see your files)");
-    void runWeb(ctx, q).catch(console.error);
+    void runWithDeadline((signal) => runWeb(ctx, q, signal)).catch(failed(ctx));
   });
 
   bot.command("agent", async (ctx) => {
@@ -83,7 +79,7 @@ export function registerHandlers(bot: Telegraf) {
     if (!tryStart(chatId)) return ctx.reply(BUSY);
 
     await ctx.reply("🤖 Agent is working on your task…");
-    runLocked(ctx, chatId, () => runAgent(ctx, chatId, goal));
+    runLocked(chatId, (signal) => runAgent(ctx, chatId, goal, signal), failed(ctx));
   });
 
   bot.command("plan", async (ctx) => {
@@ -98,15 +94,16 @@ export function registerHandlers(bot: Telegraf) {
     if (!tryStart(chatId)) return ctx.reply(BUSY);
 
     await ctx.reply("🧭 Generating a plan…");
-    runLocked(ctx, chatId, async () => {
-      const plan = await generatePlan(goal);
+    runLocked(chatId, async (signal) => {
+      const plan = await generatePlan(goal, signal);
+      if (signal.aborted) return;
       const session = newPlanSession(plan);
       planSessions.set(chatId, session); // set BEFORE the buttons exist
       await ctx.reply(planMessage(session), {
         parse_mode: "Markdown",
         ...planKeyboard(session),
       });
-    });
+    }, failed(ctx));
   });
 
   // ---------- plan buttons: every one carries the plan session ID ----------
@@ -160,7 +157,7 @@ export function registerHandlers(bot: Telegraf) {
     await ctx.editMessageText(`🚀 Executing ${steps.length} step(s)…\n\n${list}`);
     await ctx.answerCbQuery();
 
-    runLocked(ctx, chatId, () => runPlanSteps(ctx, chatId, plan, steps));
+    runLocked(chatId, (signal) => runPlanSteps(ctx, chatId, plan, steps, signal), failed(ctx));
   });
 
   // ---------- approval buttons: every one carries the approval session ID ----------

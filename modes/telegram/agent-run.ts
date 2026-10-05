@@ -5,6 +5,7 @@ import { ActionTracker } from "../agent/action-tracker.ts";
 import { Toolexecuter } from "../agent/tool-executer.ts";
 import { createAgentTools } from "../agent/agent-tools.ts";
 import { assertToolSetIsSafe } from "../agent/tool-policy.ts";
+import { tokenBudgetExceeded } from "../agent/run-limits.ts";
 import { defaultAgentConfig, type AgentConfig } from "../agent/types.ts";
 import { createWebTools } from "../plan/web-tools.ts";
 import type { Plan, PlanStep } from "../plan/types.ts";
@@ -27,7 +28,8 @@ function readOnlyConfig(): AgentConfig {
 function agentOptions(config: AgentConfig, maxSteps: number) {
   return {
     model: getAgentModel(),
-    stopWhen: stepCountIs(maxSteps),
+    // Stops at the step limit OR when the token budget is used up.
+    stopWhen: [stepCountIs(maxSteps), tokenBudgetExceeded()],
     instructions: `Workspace root: ${config.codebasePath}`,
   };
 }
@@ -72,7 +74,7 @@ function createReadOnlyTools(executor: Toolexecuter) {
  * (Before: web tools were added automatically whenever FIRECRAWL_API_KEY was set,
  * so file contents could leave through a crawled URL.)
  */
-export async function runAsk(ctx:{reply:(t:string , o?:object)=>Promise<unknown>} , question:string){
+export async function runAsk(ctx:{reply:(t:string , o?:object)=>Promise<unknown>} , question:string, signal?: AbortSignal){
   const config = readOnlyConfig();
   const tracker = new ActionTracker();
   const executor = new Toolexecuter(tracker, config);
@@ -83,7 +85,8 @@ export async function runAsk(ctx:{reply:(t:string , o?:object)=>Promise<unknown>
     tools,
   });
 
-  const {text} = await agent.generate({prompt:question});
+  const {text} = await agent.generate({prompt:question, abortSignal: signal});
+  if (signal?.aborted) return; // deadline passed: stay silent
   await replyMd(ctx , text || ("no answer"))
 }
 
@@ -91,7 +94,7 @@ export async function runAsk(ctx:{reply:(t:string , o?:object)=>Promise<unknown>
  * Web research. This agent reads untrusted pages and can reach the internet,
  * so it gets NO file tools and NO change tools.
  */
-export async function runWeb(ctx:{reply:(t:string , o?:object)=>Promise<unknown>} , question:string){
+export async function runWeb(ctx:{reply:(t:string , o?:object)=>Promise<unknown>} , question:string, signal?: AbortSignal){
   if (!process.env.FIRECRAWL_API_KEY) {
     await ctx.reply("Web research is off: FIRECRAWL_API_KEY is not set.");
     return;
@@ -100,7 +103,7 @@ export async function runWeb(ctx:{reply:(t:string , o?:object)=>Promise<unknown>
   assertToolSetIsSafe(tools, "web");
   const agent = new ToolLoopAgent({
     model: getAgentModel(),
-    stopWhen: stepCountIs(15),
+    stopWhen: [stepCountIs(15), tokenBudgetExceeded()],
     // A prompt is only a weak extra layer. The real protection is the empty tool list above.
     instructions:
       "You research questions on the web. You have no access to the user's files. " +
@@ -108,11 +111,12 @@ export async function runWeb(ctx:{reply:(t:string , o?:object)=>Promise<unknown>
     tools,
   });
 
-  const {text} = await agent.generate({prompt:question});
+  const {text} = await agent.generate({prompt:question, abortSignal: signal});
+  if (signal?.aborted) return; // deadline passed: stay silent
   await replyMd(ctx , text || ("no answer"))
 }
 
-export async function runAgent(ctx: TextReplier, chatId: number, goal: string) {
+export async function runAgent(ctx: TextReplier, chatId: number, goal: string, signal?: AbortSignal) {
   const config = defaultAgentConfig();
   const tracker = new ActionTracker();
   const executor = new Toolexecuter(tracker, config);
@@ -122,7 +126,9 @@ export async function runAgent(ctx: TextReplier, chatId: number, goal: string) {
     ...agentOptions(config, 40),
     tools,
   });
-  const { text } = await agent.generate({ prompt: goal });
+  const { text } = await agent.generate({ prompt: goal, abortSignal: signal });
+  // Deadline passed: no late messages, and nothing is staged for approval.
+  if (signal?.aborted) return;
   if (text?.trim()) await replyMd(ctx, SUMMARY_NOTE + text.trim());
  await finishOrApprove(ctx, chatId, tracker, executor, '✅ Done. No file changes were needed.');
 }
@@ -132,6 +138,7 @@ export async function runPlanSteps(
   chatId: number,
   plan: Plan,
   steps: PlanStep[],
+  signal?: AbortSignal,
 ) {
   const config = defaultAgentConfig();
   const tracker = new ActionTracker();
@@ -148,7 +155,8 @@ export async function runPlanSteps(
       ...agentOptions(config, 30),
       tools,
     });
-    const { text } = await agent.generate({ prompt });
+    const { text } = await agent.generate({ prompt, abortSignal: signal });
+    if (signal?.aborted) return;
     if (text?.trim()) await replyMd(ctx, SUMMARY_NOTE + text.trim());
   }
 
