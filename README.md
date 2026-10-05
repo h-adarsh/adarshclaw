@@ -1,91 +1,54 @@
-# adarshclaw
+# Adarshclaw
 
-`adarshclaw` is a Bun-based, human-in-the-loop AI coding assistant for a local
-workspace. It uses an OpenRouter model to inspect a codebase, answer questions,
-create an implementation plan, or make approved changes.
+`adarshclaw` is a highly secure, human-in-the-loop AI coding assistant built on Bun. It uses an OpenRouter model to inspect codebases, answer questions, draft implementation plans, and make approved changes. 
 
-## MVP capabilities
+Designed with security as a first-class citizen, it ensures no AI operates unsupervised on your machine.
 
-- **Agent Mode**: describe a coding goal. The agent can inspect files and stage
-	file, folder, and shell operations. Changes are shown for approval before they
-	are applied.
-- **Plan Mode**: ask for a goal, let the model research the workspace and draft
-	a short plan, select the steps to execute, then review the staged changes.
-- **Ask Mode**: ask a read-only question about the workspace. The answer can be
-	saved as a Markdown file after approval.
-- **Telegram Mode**: available from the wakeup menu when Telegram credentials
-	are configured.
+## 🚀 Core Capabilities
 
-## How it works
+- **Agent Mode**: Describe a goal. The AI inspects files, creates/modifies code, and queues shell commands. Changes are staged for your approval before application.
+- **Plan Mode**: Ask for a complex goal. The AI researches the workspace, drafts a step-by-step plan, and lets you select specific steps to execute.
+- **Ask Mode**: Read-only workspace Q&A. The AI can explore your codebase to answer questions without modifying anything.
+- **Web Search (`/web`)**: A dedicated mode to search the internet for documentation. (Strictly isolated: web agents cannot see your files).
+- **Telegram Bot**: Access all modes remotely via a secure, owner-only Telegram bot interface.
 
-1. The CLI starts `runWakeup()` and presents the CLI or Telegram entrypoint.
-2. CLI mode selects Agent, Plan, or Ask.
-3. Each mode creates a `ToolLoopAgent` from the Vercel AI SDK and gets its model
-	 from `ai/ai.config.ts`.
-4. Tools operate relative to the current working directory. The executor blocks
-	 paths outside the workspace and excludes `.git`, dependencies, build output,
-	 logs, and `.env` files.
-5. Mutations are staged in memory and recorded by `ActionTracker`; they are not
-	 written to disk until the approval flow accepts them.
+## 🛡️ Advanced Security Model
 
-## Requirements
+Adarshclaw assumes AI models can be tricked (Prompt Injection) and enforces a strict defense-in-depth architecture:
 
-- [Bun](https://bun.sh/) installed
-- An OpenRouter API key
-- A model available through OpenRouter
+- **Staged Approval & Diffs**: All file mutations are staged in-memory. After you approve and commands run, a post-sandbox `git diff` shows you *exactly* what changed on disk.
+- **Docker Sandbox for Shell**: Shell commands never run on your host machine. They run inside an isolated, network-disabled Docker container (`oven/bun:1`) with a read-only root filesystem and dropped privileges.
+- **Secondary AI Verification**: Before you see an approval prompt, a secondary read-only AI automatically audits the staged changes for malicious intent, data exfiltration, or prompt injection.
+- **Strict Tool Isolation**: An agent that reads your files never has access to the internet. An agent that browses the web never has access to your files.
+- **Safe Path Enforcement & Exclusions**: Symlinks are resolved to prevent path traversal. Sensitive files (`.env*`, `.git`, `credentials.json`, `*.pem`, etc.) are hard-blocked.
+- **Run Limits & Locks**: Built-in 10-minute deadlines, token budget limits, and single-task locks prevent runaway agents and resource exhaustion.
 
-## Setup
+## ⚙️ Requirements & Setup
+
+1. **Bun** installed on your system.
+2. **Docker** (Required if you want the AI to run shell commands).
+3. **OpenRouter API Key**.
+4. *(Optional)* **Telegram Bot Token** and your Telegram User ID for remote access.
 
 ```sh
+# 1. Install dependencies
 bun install
+
+# 2. Configure environment variables (e.g., in your shell or .env)
 export OPENROUTER_API_KEY="your-key"
-export OPEN_ROUTER_DEFAULT_MODEL="openrouter/free"
+export OPEN_ROUTER_DEFAULT_MODEL="openrouter/free" # Optional
 ```
 
-The model variable is optional and defaults to `openrouter/free`. Keep the API
-key in your shell environment or a local environment file; do not commit it.
+## 💻 Usage
 
-## Run
-
-From the project directory:
-
+### CLI Mode
+Run the interactive terminal UI from your project directory:
 ```sh
 bun index.ts
 ```
 
-The explicit equivalent is:
+### Telegram Mode
+If you configure `TELEGRAM_BOT_TOKEN` and `TELEGRAM_OWNER_ID` in your environment, the bot will start automatically. Send commands like `/agent`, `/ask`, `/plan`, and `/web` directly in a private chat with your bot.
 
-```sh
-bun index.ts wakeup
-```
-
-For development, the package also exposes the `adarshclaw-build` binary after
-installing the package locally.
-
-## Project map
-
-```text
-index.ts                  Commander CLI entrypoint
-tui/wakeup.ts             Banner and top-level mode selector
-modes/cli.ts              Agent, Plan, and Ask selector
-modes/agent/              Mutable tools, staging, diffs, and approval
-modes/plan/               Plan generation and selected-step execution
-modes/ask/                Read-only workspace Q&A and Markdown export
-modes/telegram/           Telegram adapter and approval sessions
-ai/ai.config.ts           OpenRouter model configuration
-```
-
-## Safety model
-
-Agent and Plan mutations are staged first. Review the proposed actions and
-approve them only when they are correct. Ask Mode disables modification, folder
-creation, and shell execution; it only enables file creation for an explicitly
-approved Markdown export.
-
-## Current MVP boundaries
-
-- There is no persistent conversation history or database.
-- The model can only use tools exposed by the selected mode.
-- Shell commands are queued for approval; command execution and other tool
-	behavior depend on the implementation in the current executor.
-- Telegram requires its own credentials and is not needed for local CLI use.
+---
+*Note: Adarshclaw does not maintain a persistent conversation database. Each task starts fresh, relying on workspace analysis rather than chat history.*
