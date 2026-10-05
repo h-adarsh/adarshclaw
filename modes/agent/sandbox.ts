@@ -27,7 +27,27 @@ export interface SandboxResult {
   error?: string;
 }
 
-export const DEFAULT_IMAGE = "oven/bun:1";
+// Pinned to one exact build (oven/bun:1 as pulled on 4 Oct 2026), so the sandbox cannot change under you.
+// To update on purpose: docker pull oven/bun:1, then
+//   docker inspect --format='{{index .RepoDigests 0}}' oven/bun:1
+// and paste the new oven/bun@sha256:... value here.
+export const DEFAULT_IMAGE =
+  "oven/bun@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895";
+
+/** True if the image is fixed to one exact build (name@sha256:<64 hex>). */
+export function isPinnedImage(image: string): boolean {
+  return /@sha256:[0-9a-f]{64}$/.test(image);
+}
+
+let warnedUnpinned = false;
+function warnIfUnpinned(image: string): void {
+  if (warnedUnpinned || isPinnedImage(image)) return;
+  warnedUnpinned = true;
+  console.warn(
+    `Sandbox image "${image}" is not pinned to a digest, so it can change under you. ` +
+      `Pin it: set ADARSHCLAW_SANDBOX_IMAGE to name@sha256:... (see docs/THREAT_MODEL.md).`,
+  );
+}
 const MOUNT = "/workspace";
 const SECRET_FILE_PATTERNS = [/^\.env/i, /^\.npmrc$/i, /\.pem$/i, /\.key$/i];
 
@@ -131,6 +151,8 @@ export function runInSandbox(command: string, o: SandboxOptions): SandboxResult 
   const bin = o.dockerBin ?? "docker";
   const name = o.name ?? `claw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const timeoutMs = o.timeoutMs ?? 60_000;
+  const image = o.image ?? process.env.ADARSHCLAW_SANDBOX_IMAGE ?? DEFAULT_IMAGE;
+  warnIfUnpinned(image);
 
   let args: string[];
   try {
@@ -139,7 +161,7 @@ export function runInSandbox(command: string, o: SandboxOptions): SandboxResult 
       fs.existsSync(path.join(workspace, p)),
     );
     const maskFiles = o.maskFiles ?? findSecretFiles(workspace);
-    args = buildDockerArgs(command, { ...o, workspace, name, readOnlyPaths, maskFiles });
+    args = buildDockerArgs(command, { ...o, image, workspace, name, readOnlyPaths, maskFiles });
   } catch (e) {
     return { exitCode: null, output: "", error: `${(e as Error).message}. Command NOT run.` };
   }
