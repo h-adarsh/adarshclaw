@@ -8,7 +8,8 @@ import { stepCountIs, ToolLoopAgent } from "ai";
 import { getAgentModel } from "../../ai";
 import { renderTerminalMarkdown } from "../../tui/terminal-md";
 import { runApprovalFlow } from "./approval";
-import { assertToolSetIsSafe } from "./tool-policy"
+import { assertToolSetIsSafe } from "./tool-policy";
+import { tokenBudgetExceeded } from "./run-limits";
 
 export async function runAgentMode() {
   console.log(chalk.green("Running in Agent mode..."));
@@ -30,7 +31,7 @@ export async function runAgentMode() {
 
   const agent = new ToolLoopAgent({
     model: getAgentModel(),
-    stopWhen: stepCountIs(40),
+    stopWhen: [stepCountIs(40), tokenBudgetExceeded()],
 
     instructions: [
       `Workspace root: ${config.codebasePath}`,
@@ -57,7 +58,13 @@ export async function runAgentMode() {
   const ok = await runApprovalFlow(tracker);
   if (!ok) return executer.clearStaging();
 
-  const { errors } = executer.applyApprovedFromTracker();
+  const { errors, diff } = executer.applyApprovedFromTracker();
+
+  if (diff) {
+    console.log(chalk.cyan("\n--- Post-Sandbox Filesystem Diff ---"));
+    console.log(diff);
+    console.log(chalk.cyan("-------------------------------------\n"));
+  }
 
   if (errors.length) {
     console.log(chalk.red("\nSome operations reported errors:\n"));

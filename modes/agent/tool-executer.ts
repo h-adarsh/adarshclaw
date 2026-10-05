@@ -5,6 +5,7 @@ import type { AgentConfig, ActionLog } from "./types";
 import { ActionTracker } from "./action-tracker";
 import { realRelativeInside } from "./safe-path";
 import { runInSandbox } from "./sandbox";
+import { execSync } from "node:child_process";
 
 export interface ShellResult {
   command: string;
@@ -383,7 +384,7 @@ export class Toolexecuter {
     return text;
   }
 
-  applyApprovedFromTracker(): { errors: string[]; shellResults: ShellResult[] } {
+  applyApprovedFromTracker(): { errors: string[]; shellResults: ShellResult[]; diff?: string } {
     const errors: string[] = [];
     const all = [...this.tracker.getActions()];
 
@@ -447,7 +448,24 @@ export class Toolexecuter {
       else if (r.exitCode !== 0) errors.push(`shell exit ${r.exitCode}: ${cmd}`);
     }
 
-    return { errors, shellResults };
+    let diff: string | undefined;
+    if (shellResults.length > 0) {
+      try {
+        const diffOut = execSync("git diff", { cwd: workspace, encoding: "utf8" });
+        const untracked = execSync("git ls-files --others --exclude-standard", { cwd: workspace, encoding: "utf8" });
+        
+        let combined = diffOut;
+        if (untracked.trim()) {
+          combined += (combined ? "\n\n" : "") + "Untracked files:\n" + untracked;
+        }
+        
+        diff = combined.trim() ? combined.trim() : "No filesystem changes detected by git.";
+      } catch (e) {
+        diff = "Could not compute git diff (perhaps not a git repository).";
+      }
+    }
+
+    return { errors, shellResults, diff };
   }
 
   clearStaging():void{
