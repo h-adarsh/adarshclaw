@@ -220,7 +220,7 @@ export function registerHandlers(bot: Telegraf) {
 
       // Approve ONLY this group. The other group stays pending and is not applied.
       for (const a of group) s.tracker.updateStatus(a.id, "approved", true);
-      const { errors, shellResults } = s.executor.applyApprovedFromTracker();
+      const { errors, shellResults, diff } = s.executor.applyApprovedFromTracker();
       for (const a of group) s.tracker.updateStatus(a.id, "executed");
       s.applied = true;
       s.pending = s.pending.filter((a) => !group.includes(a));
@@ -231,6 +231,8 @@ export function registerHandlers(bot: Telegraf) {
           const head = `$ ${r.command}\nexit: ${r.exitCode ?? "n/a"}${r.error ? `\nerror: ${r.error}` : ""}`;
           await sendLong(withNativeUpload(ctx), `${head}\n\n${r.output || "(no output)"}`, "shell-output.txt");
         }
+        // What the commands REALLY changed in your files (compared by content).
+        if (diff) await sendLong(withNativeUpload(ctx), diff, "shell-changes.diff");
       }
 
       if (s.pending.length === 0) {

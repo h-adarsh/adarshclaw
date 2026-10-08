@@ -5,7 +5,7 @@ import type { AgentConfig, ActionLog } from "./types";
 import { ActionTracker } from "./action-tracker";
 import { realRelativeInside } from "./safe-path";
 import { runInSandbox } from "./sandbox";
-import { execSync } from "node:child_process";
+import { diffSnapshots, formatChanges, takeSnapshot, type Changes, type Snapshot } from "./snapshot";
 
 export interface ShellResult {
   command: string;
@@ -384,7 +384,7 @@ export class Toolexecuter {
     return text;
   }
 
-  applyApprovedFromTracker(): { errors: string[]; shellResults: ShellResult[]; diff?: string } {
+  applyApprovedFromTracker(): { errors: string[]; shellResults: ShellResult[]; diff?: string; changes?: Changes } {
     const errors: string[] = [];
     const all = [...this.tracker.getActions()];
 
@@ -429,6 +429,11 @@ export class Toolexecuter {
     // If Docker is unavailable the command is not run (fail closed).
     const shellResults: ShellResult[] = [];
     const workspace = fs.realpathSync(this.config.codebasePath);
+    // Taken AFTER the approved file changes were written, so only the shell's effect is compared.
+    let before: Snapshot | undefined;
+    if (all.some((x) => x.type === "tool_execute" && x.status === "approved")) {
+      before = takeSnapshot(workspace);
+    }
     for (const a of all.filter(
       (x) => x.type === "tool_execute" && x.status === "approved",
     )) {
@@ -448,24 +453,18 @@ export class Toolexecuter {
       else if (r.exitCode !== 0) errors.push(`shell exit ${r.exitCode}: ${cmd}`);
     }
 
+    // What did the shell commands REALLY change? Compared by content, without git.
+    // (Before: `git diff` on the host. It missed everything in .gitignore, needed a git
+    // repository, and git can run programs named in a repository's own config.)
     let diff: string | undefined;
-    if (shellResults.length > 0) {
-      try {
-        const diffOut = execSync("git diff", { cwd: workspace, encoding: "utf8" });
-        const untracked = execSync("git ls-files --others --exclude-standard", { cwd: workspace, encoding: "utf8" });
-        
-        let combined = diffOut;
-        if (untracked.trim()) {
-          combined += (combined ? "\n\n" : "") + "Untracked files:\n" + untracked;
-        }
-        
-        diff = combined.trim() ? combined.trim() : "No filesystem changes detected by git.";
-      } catch (e) {
-        diff = "Could not compute git diff (perhaps not a git repository).";
-      }
+    let changes: Changes | undefined;
+    if (before && shellResults.some((r) => r.exitCode !== null)) {
+      const after = takeSnapshot(workspace);
+      changes = diffSnapshots(before, after);
+      diff = formatChanges(before, after, changes);
     }
 
-    return { errors, shellResults, diff };
+    return { errors, shellResults, diff, changes };
   }
 
   clearStaging():void{

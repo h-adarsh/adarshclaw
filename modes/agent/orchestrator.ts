@@ -8,6 +8,7 @@ import { stepCountIs, ToolLoopAgent } from "ai";
 import { getAgentModel } from "../../ai";
 import { renderTerminalMarkdown } from "../../tui/terminal-md";
 import { runApprovalFlow } from "./approval";
+import { sanitizeForTerminal } from "../../tui/safe-text";
 import { assertToolSetIsSafe } from "./tool-policy";
 import { tokenBudgetExceeded } from "./run-limits";
 
@@ -61,8 +62,8 @@ export async function runAgentMode() {
   const { errors, diff } = executer.applyApprovedFromTracker();
 
   if (diff) {
-    console.log(chalk.cyan("\n--- Post-Sandbox Filesystem Diff ---"));
-    console.log(diff);
+    console.log(chalk.cyan("\n--- What the shell commands changed (compared by content) ---"));
+    console.log(sanitizeForTerminal(diff));
     console.log(chalk.cyan("-------------------------------------\n"));
   }
 
