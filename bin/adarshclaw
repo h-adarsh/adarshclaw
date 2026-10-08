@@ -1,0 +1,34 @@
+#!/bin/sh
+# Safe launcher for adarshclaw.
+#
+# WHY: when Bun starts, it reads bunfig.toml and .env files from the CURRENT directory.
+# adarshclaw works on the current directory, so that directory may be a repository you
+# do not control. Its bunfig.toml can run code ("preload") and its .env can change
+# settings (Telegram owner, Docker image, ...) BEFORE adarshclaw's own code starts.
+#
+# This script starts Bun with:
+#   --config   pointing at adarshclaw's own bunfig.toml (the current directory's is ignored)
+#   --env-file pointing at adarshclaw's own .env      (the current directory's is ignored)
+# Use it from the directory you want the agent to work in. macOS and Linux only.
+
+set -eu
+
+# Find the real location of this script, even when it is started through a symlink.
+SELF="$0"
+while [ -h "$SELF" ]; do
+  DIR=$(cd "$(dirname "$SELF")" && pwd -P)
+  LINK=$(readlink "$SELF")
+  case "$LINK" in
+    /*) SELF="$LINK" ;;
+    *) SELF="$DIR/$LINK" ;;
+  esac
+done
+ROOT=$(cd "$(dirname "$SELF")/.." && pwd -P)
+
+if [ -f "$ROOT/.env" ]; then
+  exec bun --config="$ROOT/bunfig.toml" --env-file="$ROOT/.env" \
+    "$ROOT/index.ts" --adarshclaw-trusted-launch "$@"
+else
+  exec bun --config="$ROOT/bunfig.toml" --no-env-file \
+    "$ROOT/index.ts" --adarshclaw-trusted-launch "$@"
+fi

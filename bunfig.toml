@@ -1,0 +1,3 @@
+# adarshclaw's own Bun config. Kept (almost) empty on purpose.
+# bin/adarshclaw passes this file with --config so that a bunfig.toml in the directory
+# you run the agent from is NOT read. Do not add "preload" here.

@@ -11,7 +11,7 @@
   },
   "private": true,
   "bin": {
-    "adarshclaw-build": "./index.ts"
+    "adarshclaw-build": "./bin/adarshclaw"
   },
   "type": "module",
   "dependencies": {
