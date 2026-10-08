@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { DEFAULT_IMAGE, buildDockerArgs, dockerReady, findSecretFiles, runInSandbox } from "./sandbox";
+import { DEFAULT_IMAGE, EXEC_TRIGGER_PATHS, buildDockerArgs, dockerReady, findSecretFiles, runInSandbox } from "./sandbox";
 import { Toolexecuter } from "./tool-executer";
 import { ActionTracker } from "./action-tracker";
 import { defaultAgentConfig } from "./types";
@@ -207,4 +207,42 @@ dockerTest("executor: shell output comes back and nothing leaks", () => {
   const { errors, shellResults } = ex.applyApprovedFromTracker();
   expect(errors).toEqual([]);
   expect(shellResults[0]!.output.trim()).toBe("from-sandbox");
+}, T);
+
+// ---------- files that run later ----------
+
+test("files that run later are read-only in the sandbox by default", () => {
+  for (const p of [".git", "node_modules", "bunfig.toml", "package.json", ".husky", ".vscode", ".github"]) {
+    expect(EXEC_TRIGGER_PATHS).toContain(p);
+  }
+});
+
+test("secret files hidden in the sandbox match the exclusion list (credentials.json, id_rsa, .p12 ...)", () => {
+  const names = ["credentials.json", "id_rsa", "id_ed25519", "cert.p12", "cert.pfx", ".netrc", "store.keystore", "notes.txt"];
+  for (const n of names) fs.writeFileSync(path.join(ws, n), "x");
+  const found = findSecretFiles(ws);
+  for (const n of names.slice(0, -1)) expect(found).toContain(n);
+  expect(found).not.toContain("notes.txt");
+});
+
+dockerTest("a command cannot change package.json, bunfig.toml or node_modules (they run later on your machine)", () => {
+  fs.writeFileSync(path.join(ws, "package.json"), '{"scripts":{}}');
+  fs.writeFileSync(path.join(ws, "bunfig.toml"), "# mine\n");
+  fs.mkdirSync(path.join(ws, "node_modules", "pkg"), { recursive: true });
+  fs.writeFileSync(path.join(ws, "node_modules", "pkg", "index.js"), "ok");
+
+  for (const rel of ["package.json", "bunfig.toml", "node_modules/pkg/index.js"]) {
+    const r = run(`echo evil >> /workspace/${rel}`);
+    expect(r.exitCode).not.toBe(0);
+  }
+  expect(fs.readFileSync(path.join(ws, "package.json"), "utf8")).toBe('{"scripts":{}}');
+  expect(fs.readFileSync(path.join(ws, "bunfig.toml"), "utf8")).toBe("# mine\n");
+  expect(fs.readFileSync(path.join(ws, "node_modules", "pkg", "index.js"), "utf8")).toBe("ok");
+}, T);
+
+dockerTest("a command can still create ordinary files next to them", () => {
+  fs.writeFileSync(path.join(ws, "package.json"), "{}");
+  const r = run("echo hi > /workspace/notes.txt && cat /workspace/package.json");
+  expect(r.exitCode).toBe(0);
+  expect(fs.readFileSync(path.join(ws, "notes.txt"), "utf8").trim()).toBe("hi");
 }, T);

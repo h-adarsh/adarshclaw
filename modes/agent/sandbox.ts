@@ -11,7 +11,7 @@ export interface SandboxOptions {
   network?: boolean;
   uid?: number;
   gid?: number;
-  /** Paths (relative to workspace) mounted read-only. Default: [".git"]. */
+  /** Paths (relative to workspace) mounted read-only. Default: EXEC_TRIGGER_PATHS. */
   readOnlyPaths?: string[];
   /** Files (relative to workspace) hidden behind an empty file. Default: found automatically. */
   maskFiles?: string[];
@@ -49,7 +49,21 @@ function warnIfUnpinned(image: string): void {
   );
 }
 const MOUNT = "/workspace";
-const SECRET_FILE_PATTERNS = [/^\.env/i, /^\.npmrc$/i, /\.pem$/i, /\.key$/i];
+const SECRET_FILE_PATTERNS = [
+  /^\.env/i, /^\.npmrc$/i, /\.pem$/i, /\.key$/i,
+  /^credentials\.json$/i, /^id_rsa$/i, /^id_ed25519$/i, /^id_ecdsa$/i,
+  /\.p12$/i, /\.pfx$/i, /^\.netrc$/i, /^\.pypirc$/i, /\.keystore$/i,
+];
+
+/**
+ * Files and folders that RUN LATER on your machine (git hooks, dependencies, Bun config,
+ * npm scripts, editor tasks, CI). They are read-only inside the sandbox, so a shell command
+ * cannot plant code in them. They can still be changed through the file tools, which show you the diff.
+ */
+export const EXEC_TRIGGER_PATHS = [
+  ".git", "node_modules", "bunfig.toml", "package.json",
+  ".husky", ".vscode", ".github",
+];
 
 const toPosix = (p: string) => p.split(path.sep).join("/");
 
@@ -157,7 +171,7 @@ export function runInSandbox(command: string, o: SandboxOptions): SandboxResult 
   let args: string[];
   try {
     const workspace = fs.realpathSync(o.workspace);
-    const readOnlyPaths = (o.readOnlyPaths ?? [".git"]).filter((p) =>
+    const readOnlyPaths = (o.readOnlyPaths ?? [...EXEC_TRIGGER_PATHS]).filter((p) =>
       fs.existsSync(path.join(workspace, p)),
     );
     const maskFiles = o.maskFiles ?? findSecretFiles(workspace);

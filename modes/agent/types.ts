@@ -31,7 +31,7 @@ export interface AgentConfig {
   excludePatterns: string[];
   /** Kill limit for one approved shell command. Default 60 000 ms. */
   shellTimeoutMs?: number;
-  /** Docker image for the shell sandbox. Default: oven/bun:1 */
+  /** Docker image for the shell sandbox. Default: the digest-pinned image in sandbox.ts */
   sandboxImage?: string;
   /** Default false: sandbox has no network. */
   sandboxNetwork?: boolean;
@@ -65,6 +65,11 @@ export const defaultAgentConfig = (): AgentConfig => ({
     'id_rsa',
     '*.p12',
     '*.pfx',
+    'id_ed25519',
+    'id_ecdsa',
+    '.netrc',
+    '.pypirc',
+    '*.keystore',
   ],
   shellTimeoutMs: 60_000,
   sandboxNetwork: false,
